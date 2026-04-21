@@ -56,7 +56,6 @@ body {
   border: 1px solid var(--border);
 }
 .login-logo .emblem img { width: 70px; height: 70px; object-fit: contain; }
-.logo-text-fallback { font-weight: 800; color: var(--brand-red); font-size: 1.1rem; letter-spacing: .5px; }
 .login-logo h1 { font-size: 22px; font-weight: 800; letter-spacing: -0.5px; }
 .login-logo p { color: var(--text-2); font-size: 13px; margin-top: 6px; }
 .field { margin-bottom: 16px; }
@@ -332,3 +331,30 @@ td { font-size: 13.5px; }
 }
 #sidebar-backdrop.show { display: block; }
 body.menu-open { overflow: hidden; }
+
+/* Logo image styles */
+.logo-img {
+  height: 56px;
+  width: auto;
+  object-fit: contain;
+  display: block;
+}
+
+/* Login screen logo — centered, slightly larger */
+#auth-screen .logo-img {
+  height: 72px;
+  margin: 0 auto;
+}
+
+/* Sidebar logo — smaller */
+.sidebar .logo-img {
+  height: 48px;
+}
+
+/* Logo background: transparent, no white box */
+.emblem {
+  background: transparent !important;
+  box-shadow: none !important;
+  border: none !important;
+  padding: 0 !important;
+}
