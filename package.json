@@ -1,0 +1,17 @@
+{
+  "name": "alu-space-erp",
+  "version": "1.0.0",
+  "description": "ALU SPACE — Gestion de Facturation. Invoice management system for aluminum menuiserie.",
+  "type": "module",
+  "scripts": {
+    "dev": "python -m http.server 3000 || npx http-server -p 3000",
+    "build": "echo 'Static hosting — no build step'",
+    "start": "npm run dev"
+  },
+  "keywords": ["invoice", "facturation", "supabase", "erp"],
+  "author": "ALU SPACE",
+  "license": "ISC",
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
