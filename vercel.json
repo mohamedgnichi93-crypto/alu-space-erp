@@ -1,6 +1,11 @@
 {
   "outputDirectory": ".",
   "buildCommand": "",
+  "functions": {
+    "api/*.js": {
+      "runtime": "nodejs18.x"
+    }
+  },
   "headers": [
     {
       "source": "/(.*)",
