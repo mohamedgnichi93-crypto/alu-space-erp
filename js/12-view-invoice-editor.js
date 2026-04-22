@@ -1,24 +1,17 @@
 /**
  * @file js/12-view-invoice-editor.js
  * @description Invoice creation and editing — forms, line items, autocomplete, save logic
- * KEY FIXES:
- * - Double-click guard on save (savingInvoice flag)
- * - In-place product update (no full re-render, preserves focus)
- * - Debounced product autocomplete
  */
-
+ 
 let currentInvoice = null;
 let savingInvoice = false;
 const debouncedProductAutocomplete = debounce(productAutocomplete, 200);
-
-/**
- * Initialises a new blank invoice
- */
+ 
 async function newInvoice() {
   const prefix = state.workspace.invoice_prefix || String(new Date().getFullYear());
   const seq = state.workspace.next_seq || 1;
   const number = prefix + String(seq).padStart(4, '0');
-
+ 
   currentInvoice = {
     id: null,
     number,
@@ -36,11 +29,7 @@ async function newInvoice() {
   };
   await renderInvoiceEditor();
 }
-
-/**
- * Loads an existing invoice and opens it in the editor
- * @param {string} id
- */
+ 
 async function openInvoice(id) {
   try {
     const { data, error } = await supabase
@@ -49,7 +38,7 @@ async function openInvoice(id) {
       .eq('id', id)
       .single();
     if (error) { toast('Erreur: ' + error.message, 'error'); return; }
-
+ 
     currentInvoice = {
       ...data,
       items: (data.invoice_items || [])
@@ -73,19 +62,20 @@ async function openInvoice(id) {
     toast('Erreur inattendue', 'error');
   }
 }
-
+ 
 async function renderInvoiceEditor() {
   const inv = currentInvoice;
   if (state.data.clients.length === 0) state.data.clients = await loadClients();
   if (state.data.products.length === 0) state.data.products = await loadProducts();
-
+ 
   $('page-title').textContent = inv.isNew ? 'Nouvelle facture' : `Facture ${escapeHTML(inv.number)}`;
   $('page-actions').innerHTML = `
     <button class="btn btn-ghost" onclick="render('invoices')">← Retour</button>
     ${!inv.isNew ? `<button class="btn btn-ghost" onclick="downloadInvoicePDF('${inv.id}')">📄 PDF</button>` : ''}
-    <button class="btn btn-primary" id="save-btn" onclick="saveInvoice()" aria-label="Enregistrer la facture">💾 Enregistrer</button>
+    <button class="btn btn-ghost" id="pdf-save-btn" onclick="saveAndDownloadPDF()">📄 Enregistrer & PDF</button>
+    <button class="btn btn-primary" id="save-btn" onclick="saveInvoice()">💾 Enregistrer</button>
   `;
-
+ 
   $('content').innerHTML = `
     <div class="card">
       <div class="card-body">
@@ -131,7 +121,7 @@ async function renderInvoiceEditor() {
         </div>
       </div>
     </div>
-
+ 
     <div class="card mt-4">
       <div class="card-header">
         <h2>Désignations</h2>
@@ -166,11 +156,11 @@ async function renderInvoiceEditor() {
       </div>
     </div>
   `;
-
+ 
   renderInvoiceLines();
   updateTotals();
 }
-
+ 
 function renderInvoiceLines() {
   $('inv-lines').innerHTML = currentInvoice.items.map((it, idx) => `
     <tr data-idx="${idx}">
@@ -187,19 +177,12 @@ function renderInvoiceLines() {
     </tr>
   `).join('');
 }
-
-/**
- * Updates a single field in currentInvoice.items[idx] without full re-render
- * Preserves focus on currently active input
- * @param {number} idx
- * @param {'designation'|'qte'|'pu'} field
- * @param {string} value
- */
+ 
 function updateLine(idx, field, value) {
   const it = currentInvoice.items[idx];
   if (field === 'qte' || field === 'pu') value = parseFloat(value) || 0;
   it[field] = value;
-
+ 
   const row = document.querySelector(`#inv-lines tr[data-idx="${idx}"]`);
   if (row) {
     const ptCell = row.querySelector('.pt-cell');
@@ -207,13 +190,13 @@ function updateLine(idx, field, value) {
   }
   updateTotals();
 }
-
+ 
 function addInvoiceLine() {
   currentInvoice.items.push({ tempId: uid(), designation: '', qte: 1, pu: 0 });
   renderInvoiceLines();
   updateTotals();
 }
-
+ 
 function removeInvoiceLine(idx) {
   if (currentInvoice.items.length === 1) {
     currentInvoice.items[0] = { tempId: uid(), designation: '', qte: 1, pu: 0 };
@@ -223,7 +206,7 @@ function removeInvoiceLine(idx) {
   renderInvoiceLines();
   updateTotals();
 }
-
+ 
 function updateTotals() {
   const t = computeTotalsFor(currentInvoice.items);
   currentInvoice.totals = t;
@@ -240,7 +223,7 @@ function updateTotals() {
     <div class="text-sm text-muted mt-2" style="font-style:italic;line-height:1.5">${num2wordsFR(t.ttc)}</div>
   `;
 }
-
+ 
 function syncInvoiceFromForm() {
   const inv = currentInvoice;
   inv.number = $('f-number').value.trim();
@@ -253,34 +236,48 @@ function syncInvoiceFromForm() {
   inv.reglement = $('f-reglement').value.trim();
   inv.notes = $('f-notes').value;
 }
-
-/**
- * SAVES INVOICE WITH DOUBLE-CLICK GUARD
- * Returns immediately if already saving to prevent duplicate inserts
- */
-async function saveInvoice() {
-  if (savingInvoice) return;
-
-  const saveBtn = $('save-btn');
-  savingInvoice = true;
-  if (saveBtn) {
-    saveBtn.disabled = true;
-    saveBtn.innerHTML = '⏳ Enregistrement...';
+ 
+// ── SAVE & PDF ────────────────────────────────────────────────────────────
+ 
+async function saveAndDownloadPDF() {
+  const ok = await saveInvoice();
+  if (ok && currentInvoice && currentInvoice.id) {
+    await downloadInvoicePDF(currentInvoice.id);
   }
-
+}
+ 
+// ── SAVE INVOICE ──────────────────────────────────────────────────────────
+ 
+async function saveInvoice() {
+  if (savingInvoice) return false;
+ 
+  const saveBtn = $('save-btn');
+  const pdfBtn = $('pdf-save-btn');
+  savingInvoice = true;
+  if (saveBtn) { saveBtn.disabled = true; saveBtn.innerHTML = '⏳ Enregistrement...'; }
+  if (pdfBtn) { pdfBtn.disabled = true; }
+ 
   try {
     syncInvoiceFromForm();
     const inv = currentInvoice;
-
-    if (!inv.number) { toast('N° de facture requis', 'error'); return; }
-    if (!inv.client_name) { toast('Nom du client requis', 'error'); return; }
+ 
+    if (!inv.number) { toast('N° de facture requis', 'error'); return false; }
+    if (!inv.client_name) { toast('Nom du client requis', 'error'); return false; }
     if (inv.items.every(it => !(Number(it.qte) > 0 && Number(it.pu) > 0))) {
       toast('Ajoutez au moins une ligne valide', 'error');
-      return;
+      return false;
     }
-
+ 
+    // get user id safely
+    const userId = state.user ? state.user.id : null;
+    if (!userId) {
+      toast('Session expirée, reconnectez-vous', 'error');
+      doLogout();
+      return false;
+    }
+ 
     const t = computeTotalsFor(inv.items);
-
+ 
     // Upsert client
     let clientId = inv.client_id;
     if (!clientId) {
@@ -293,22 +290,22 @@ async function saveInvoice() {
         if (inv.client_adresse && existing.adresse !== inv.client_adresse) updates.adresse = inv.client_adresse;
         if (Object.keys(updates).length) {
           const { error: err1 } = await supabase.from('clients').update(updates).eq('id', existing.id);
-          if (err1) { toast('Erreur sauvegarde: ' + err1.message, 'error'); return; }
+          if (err1) { toast('Erreur sauvegarde: ' + err1.message, 'error'); return false; }
         }
       } else {
         const { data: newC, error: err2 } = await supabase.from('clients').insert({
           workspace_id: state.workspace.id,
-          created_by: state.user.id,
+          created_by: userId,
           name: inv.client_name,
           cin: inv.client_cin,
           tel: inv.client_tel,
           adresse: inv.client_adresse,
         }).select().single();
-        if (err2) { toast('Erreur sauvegarde: ' + err2.message, 'error'); return; }
+        if (err2) { toast('Erreur sauvegarde: ' + err2.message, 'error'); return false; }
         if (newC) { clientId = newC.id; state.data.clients.push(newC); }
       }
     }
-
+ 
     const invoicePayload = {
       workspace_id: state.workspace.id,
       number: inv.number,
@@ -327,38 +324,39 @@ async function saveInvoice() {
       payment_status: inv.payment_status,
       reglement: inv.reglement,
       notes: inv.notes,
-      updated_by: state.user.id,
+      updated_by: userId,
     };
-
+ 
     let savedId = inv.id;
     if (inv.isNew) {
-      invoicePayload.created_by = state.user.id;
+      invoicePayload.created_by = userId;
       const { data, error } = await supabase.from('invoices').insert(invoicePayload).select().single();
-      if (error) { toast('Erreur: ' + error.message, 'error'); return; }
+      if (error) { toast('Erreur: ' + error.message, 'error'); return false; }
       savedId = data.id;
-
-      // Bump sequence
+      currentInvoice.id = savedId;
+      currentInvoice.isNew = false;
+ 
       const { error: err3 } = await supabase.from('workspaces')
         .update({ next_seq: (state.workspace.next_seq || 1) + 1 })
         .eq('id', state.workspace.id);
-      if (err3) { toast('Erreur sauvegarde: ' + err3.message, 'error'); return; }
+      if (err3) { toast('Erreur sauvegarde: ' + err3.message, 'error'); return false; }
       state.workspace.next_seq = (state.workspace.next_seq || 1) + 1;
-
+ 
       await logAction('invoice.create', 'invoice', savedId, inv.number, { ttc: t.ttc });
     } else {
       const { error } = await supabase.from('invoices').update(invoicePayload).eq('id', inv.id);
-      if (error) { toast('Erreur: ' + error.message, 'error'); return; }
+      if (error) { toast('Erreur: ' + error.message, 'error'); return false; }
       const { error: err4 } = await supabase.from('invoice_items').delete().eq('invoice_id', inv.id);
-      if (err4) { toast('Erreur sauvegarde: ' + err4.message, 'error'); return; }
+      if (err4) { toast('Erreur sauvegarde: ' + err4.message, 'error'); return false; }
       await logAction('invoice.update', 'invoice', inv.id, inv.number, { ttc: t.ttc });
     }
-
+ 
     // Insert items
     const itemsPayload = inv.items
       .filter(it => (it.designation && it.designation.trim()) || (Number(it.qte) > 0 && Number(it.pu) > 0))
       .map((it, idx) => ({
         invoice_id: savedId,
-        user_id: state.user.id,
+        user_id: userId,
         workspace_id: state.workspace.id,
         position: idx,
         designation: it.designation || '',
@@ -366,42 +364,51 @@ async function saveInvoice() {
         pu: Number(it.pu) || 0,
         product_id: it.product_id || null,
       }));
-
+ 
     if (itemsPayload.length) {
       const { error: ie } = await supabase.from('invoice_items').insert(itemsPayload);
-      if (ie) { toast('Erreur lignes: ' + ie.message, 'error'); return; }
+      if (ie) { toast('Erreur lignes: ' + ie.message, 'error'); return false; }
     }
-
-    toast('Facture enregistrée', 'success');
-    render('invoices');
+ 
+    toast('Facture enregistrée ✓', 'success');
+ 
+    // update PDF button now that we have an id
+    const pdfSaveBtn = $('pdf-save-btn');
+    const pageActions = $('page-actions');
+    if (pageActions && !pageActions.querySelector(`[onclick*="downloadInvoicePDF('${savedId}')"]`)) {
+      const directPdfBtn = document.createElement('button');
+      directPdfBtn.className = 'btn btn-ghost';
+      directPdfBtn.onclick = () => downloadInvoicePDF(savedId);
+      directPdfBtn.innerHTML = '📄 PDF';
+      pageActions.insertBefore(directPdfBtn, pdfSaveBtn || saveBtn);
+    }
+ 
+    return true;
   } catch (e) {
     console.error('saveInvoice', e);
     toast('Erreur inattendue', 'error');
+    return false;
   } finally {
     savingInvoice = false;
-    if (saveBtn) {
-      saveBtn.disabled = false;
-      saveBtn.innerHTML = '💾 Enregistrer';
-    }
+    if (saveBtn) { saveBtn.disabled = false; saveBtn.innerHTML = '💾 Enregistrer'; }
+    if (pdfBtn) { pdfBtn.disabled = false; }
   }
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// CLIENT AUTOCOMPLETE
-// ──────────────────────────────────────────────────────────────────────────
-
+ 
+// ── CLIENT AUTOCOMPLETE ───────────────────────────────────────────────────
+ 
 function clientAutocomplete(q) {
   const ac = $('client-ac');
   if (!ac) return;
   q = q.trim().toLowerCase();
   if (!q) { ac.classList.remove('show'); return; }
-
+ 
   const matches = state.data.clients
     .filter(c => c.name.toLowerCase().includes(q) || (c.cin || '').includes(q))
     .slice(0, 6);
-
+ 
   if (!matches.length) { ac.classList.remove('show'); return; }
-
+ 
   ac.innerHTML = matches.map(c => `
     <div class="autocomplete-item" onclick="pickClient('${c.id}')">
       <div class="primary">${escapeHTML(c.name)}</div>
@@ -410,7 +417,7 @@ function clientAutocomplete(q) {
   `).join('');
   ac.classList.add('show');
 }
-
+ 
 function pickClient(id) {
   const c = state.data.clients.find(x => x.id === id);
   if (!c) return;
@@ -421,23 +428,21 @@ function pickClient(id) {
   currentInvoice.client_id = c.id;
   $('client-ac').classList.remove('show');
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// PRODUCT AUTOCOMPLETE — DEBOUNCED
-// ──────────────────────────────────────────────────────────────────────────
-
+ 
+// ── PRODUCT AUTOCOMPLETE ──────────────────────────────────────────────────
+ 
 function productAutocomplete(idx, q) {
   const ac = $('prod-ac-' + idx);
   if (!ac) return;
   q = q.trim().toLowerCase();
   if (!q || q.length < 2) { ac.classList.remove('show'); return; }
-
+ 
   const matches = state.data.products
     .filter(p => p.designation.toLowerCase().includes(q))
     .slice(0, 6);
-
+ 
   if (!matches.length) { ac.classList.remove('show'); return; }
-
+ 
   ac.innerHTML = matches.map(p => `
     <div class="autocomplete-item" onclick="pickProduct(${idx}, '${p.id}')">
       <div class="primary">${escapeHTML(p.designation)}</div>
@@ -446,32 +451,26 @@ function productAutocomplete(idx, q) {
   `).join('');
   ac.classList.add('show');
 }
-
-/**
- * PICKS A PRODUCT — IN-PLACE UPDATE, NO FOCUS LOSS
- * Updates only the affected row's cells without re-rendering the entire table
- * This preserves focus on currently active input
- */
+ 
 function pickProduct(idx, id) {
   const p = state.data.products.find(x => x.id === id);
   if (!p) return;
-
+ 
   currentInvoice.items[idx].designation = p.designation;
   currentInvoice.items[idx].pu = Number(p.price);
   currentInvoice.items[idx].product_id = p.id;
-
-  // In-place DOM update — never calls renderInvoiceLines()
+ 
   const row = document.querySelector(`#inv-lines tr[data-idx="${idx}"]`);
   if (row) {
     const textarea = row.querySelector('textarea');
     const numInputs = row.querySelectorAll('input[type="number"]');
     const ptCell = row.querySelector('.pt-cell');
     if (textarea) textarea.value = p.designation;
-    if (numInputs[1]) numInputs[1].value = p.price; // [0]=qte, [1]=pu
+    if (numInputs[1]) numInputs[1].value = p.price;
     const qte = Number(currentInvoice.items[idx].qte) || 0;
     if (ptCell) ptCell.value = fmt3(qte * Number(p.price));
   }
-
+ 
   const ac = $('prod-ac-' + idx);
   if (ac) ac.classList.remove('show');
   updateTotals();
