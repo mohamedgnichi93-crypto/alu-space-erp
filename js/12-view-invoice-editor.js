@@ -268,13 +268,7 @@ async function saveInvoice() {
       return false;
     }
  
-    // get user id safely
-    const userId = state.user ? state.user.id : null;
-    if (!userId) {
-      toast('Session expirée, reconnectez-vous', 'error');
-      doLogout();
-      return false;
-    }
+    // get user id safely`n      if (!state.user) { const { data: { user } } = await supabase.auth.getUser(); state.user = user; }`n      const userId = state.user?.id ?? null;`n      if (!userId) { toast('Session expir\u00e9e, reconnectez-vous', 'error'); doLogout(); return false; }
  
     const t = computeTotalsFor(inv.items);
  
