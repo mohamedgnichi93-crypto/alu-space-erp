@@ -103,7 +103,9 @@ async function saveClient(id) {
       await logAction('client.update', 'client', id, name);
     } else {
       payload.workspace_id = state.workspace.id;
-      payload.created_by = state.user.id;
+      const uid = state.user?.id ?? (await supabase.auth.getUser()).data?.user?.id;
+      if (!uid) { toast('Session expir\u00e9e', 'error'); return; }
+      payload.created_by = uid;
       const { data: newC, error } = await supabase.from('clients').insert(payload).select().single();
       if (error) { toast('Erreur: ' + error.message, 'error'); return; }
       await logAction('client.create', 'client', newC.id, name);
@@ -131,3 +133,4 @@ async function deleteClient(id, name) {
     }
   }, true);
 }
+
