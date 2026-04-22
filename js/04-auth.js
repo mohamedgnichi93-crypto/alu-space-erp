@@ -40,7 +40,7 @@ async function doLogin() {
 
     // Store user email for identification
     localStorage.setItem('userEmail', email);
-    await postLoginFlow();
+    const { data: { user } } = await supabase.auth.getUser(); state.user = user; await postLoginFlow();
 
   } catch (e) {
     if (errEl) { errEl.textContent = 'Erreur réseau. Vérifiez votre connexion.'; errEl.style.display = 'block'; }
